@@ -710,15 +710,12 @@ def _opencode_arguments(name: str, encoded: str) -> str:
     elif name == "skill":
         mapped = {"name": _required(arguments, name, "name")}
     elif name == "task":
-        tasks = _required(arguments, name, "tasks")
-        if not isinstance(tasks, list) or not tasks or not isinstance(tasks[0], dict):
-            raise OpenCodeError("Hermes delegate history cannot be replayed as task.")
-        task = tasks[0]
+        task = _delegate_history_task(arguments)
         context = str(task.get("context") or "")
         lines = context.splitlines()
         mapped = {
             "description": lines[0] if lines else "Delegated Hermes task",
-            "prompt": _required(task, name, "goal"),
+            "prompt": str(task.get("goal") or "Delegated Hermes task"),
             "subagent_type": "general",
         }
         prefixes = {
@@ -770,6 +767,39 @@ def _opencode_arguments(name: str, encoded: str) -> str:
     else:
         mapped = arguments
     return json.dumps(mapped, separators=(",", ":"))
+
+
+def _delegate_history_task(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replayable task from any recorded delegate_task shape; hermes declares required=[]."""
+    tasks = _delegate_history_tasks(arguments)
+    return tasks[0] if tasks else {"goal": "", "context": ""}
+
+
+def _delegate_history_tasks(arguments: dict[str, Any]) -> list[dict[str, Any]]:
+    if (tasks := arguments.get("tasks")) is None and (goal := arguments.get("goal")) is not None:
+        return [{"goal": goal, "context": arguments.get("context", "")}]
+    if isinstance(tasks, str):
+        try:
+            tasks = json.loads(tasks)
+        except json.JSONDecodeError:
+            tasks = None
+    tasks = [task for task in tasks if isinstance(task, dict)] if isinstance(tasks, list) else []
+    if tasks:
+        return tasks
+    return [
+        {
+            "goal": "",
+            "context": "\n".join(
+                f"{label}: {value}"
+                for key, label in (
+                    ("action", "Requested action"),
+                    ("subagent_id", "Previous task ID"),
+                    ("message", "Requested steering message"),
+                )
+                if (value := arguments.get(key)) not in (None, "")
+            ),
+        }
+    ]
 
 
 def _opencode_alias(name: str, arguments: str, mapped_tools: dict[str, str]) -> str:

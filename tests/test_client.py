@@ -322,6 +322,54 @@ class ClientTests(unittest.TestCase):
         with self.assertRaisesRegex(client.OpenCodeError, "compatibility-only tool"):
             client._translate_tool("read", '{"filePath":"a.py"}', mapped)
 
+    def test_every_recorded_delegate_shape_replays_as_task(self):
+        _, mapped = client._wire_tools([tool("delegate_task")])
+
+        def replay(arguments):
+            name, encoded = client._opencode_tool(
+                "delegate_task", json.dumps(arguments), mapped
+            )
+            self.assertEqual(name, "task")
+            return json.loads(encoded)
+
+        required = set(client.COMPAT_TOOL_PARAMETERS["task"]["required"])
+
+        for arguments in (
+            {"action": "list"},
+            {"action": "stop", "subagent_id": "sa-0-f834b4a7"},
+            {
+                "action": "steer",
+                "subagent_id": "sa-1",
+                "message": "skip the scratch database",
+            },
+            {"goal": "Ship the parser", "context": "Parser lives in src/parse.py"},
+            {"tasks": json.dumps([{"goal": "Ship it", "context": "src/parse.py"}])},
+            {"tasks": None, "goal": "Legacy wins over a null batch"},
+            {},
+        ):
+            with self.subTest(arguments=arguments):
+                mapped_arguments = replay(arguments)
+                self.assertLessEqual(required, set(mapped_arguments))
+
+        stopped = replay({"action": "stop", "subagent_id": "sa-0-f834b4a7"})
+        self.assertEqual(stopped["task_id"], "sa-0-f834b4a7")
+        self.assertIn("Requested action: stop", stopped["description"])
+
+        steered = replay(
+            {"action": "steer", "subagent_id": "sa-1", "message": "skip the scratch db"}
+        )
+        self.assertEqual(steered["task_id"], "sa-1")
+
+        legacy = replay({"goal": "Ship the parser", "context": "Parser lives in src"})
+        self.assertEqual(legacy["prompt"], "Ship the parser")
+        self.assertEqual(legacy["description"], "Parser lives in src")
+
+        unencoded = replay({"tasks": json.dumps([{"goal": "Ship it", "context": "c"}])})
+        self.assertEqual(unencoded["prompt"], "Ship it")
+
+        batch = replay({"tasks": [{"goal": "First", "context": "a"}, {"goal": "Second"}]})
+        self.assertEqual(batch["prompt"], "First")
+
     def test_native_tool_history_and_choice_are_rewritten_to_aliases(self):
         captured = {}
 
