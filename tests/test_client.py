@@ -367,8 +367,32 @@ class ClientTests(unittest.TestCase):
         unencoded = replay({"tasks": json.dumps([{"goal": "Ship it", "context": "c"}])})
         self.assertEqual(unencoded["prompt"], "Ship it")
 
-        batch = replay({"tasks": [{"goal": "First", "context": "a"}, {"goal": "Second"}]})
-        self.assertEqual(batch["prompt"], "First")
+    def test_delegate_batch_replay_keeps_every_goal(self):
+        _, mapped = client._wire_tools([tool("delegate_task")])
+
+        def prompt(arguments):
+            _, encoded = client._opencode_tool(
+                "delegate_task", json.dumps(arguments), mapped
+            )
+            return json.loads(encoded)["prompt"]
+
+        self.assertEqual(prompt({"tasks": [{"goal": "Only", "context": "c"}]}), "Only")
+
+        batch = prompt(
+            {
+                "tasks": [
+                    {"goal": "Fix the blocker", "context": "src/a.py"},
+                    {"goal": "Scope by country", "context": "src/b.py"},
+                    {"goal": "Write the changelog"},
+                ]
+            }
+        )
+        self.assertIn("Fix the blocker", batch)
+        self.assertIn("Scope by country", batch)
+        self.assertIn("Write the changelog", batch)
+        self.assertIn("src/b.py", batch)
+        self.assertTrue(batch.startswith("Fix the blocker"))
+        self.assertLess(batch.index("Scope by country"), batch.index("Write the changelog"))
 
     def test_native_tool_history_and_choice_are_rewritten_to_aliases(self):
         captured = {}
